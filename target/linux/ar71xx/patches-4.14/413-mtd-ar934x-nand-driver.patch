@@ -1,8 +1,8 @@
 --- a/drivers/mtd/nand/Kconfig
 +++ b/drivers/mtd/nand/Kconfig
-@@ -571,4 +571,12 @@ config MTD_NAND_RB750
- 	tristate "NAND flash driver for the RouterBoard 750"
- 	depends on MTD_NAND && ATH79_MACH_RB750
+@@ -579,4 +579,12 @@ config MTD_NAND_SPI_NAND
+           Enables the driver for SPI NAND flash controller on Qualcomm-Atheros System on Chips
+           This controller is used on families AR71xx and AR9xxx.
  
 +config MTD_NAND_AR934X
 +	tristate "NAND flash driver for the Qualcomm Atheros AR934x/QCA955x SoCs"
