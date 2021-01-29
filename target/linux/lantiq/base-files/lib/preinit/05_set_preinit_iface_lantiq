@@ -1,5 +1,3 @@
-#!/bin/sh
-
 . /lib/functions/lantiq.sh
 
 set_preinit_iface() {
@@ -7,4 +5,3 @@ set_preinit_iface() {
 }
 
 boot_hook_add preinit_main set_preinit_iface
-
