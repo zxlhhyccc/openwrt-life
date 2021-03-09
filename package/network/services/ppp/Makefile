@@ -64,6 +64,16 @@ define Package/ppp/conffiles
 /etc/ppp/options
 endef
 
+define Package/ppp-multilink/conffiles
+/etc/ppp/chap-secrets
+/etc/ppp/filter
+/etc/ppp/ip-down
+/etc/ppp/ip-up
+/etc/ppp/ipv6-down
+/etc/ppp/ipv6-up
+/etc/ppp/options
+endef
+
 define Package/ppp-mod-pppoa
 $(call Package/ppp/Default)
   DEPENDS:=@(PACKAGE_ppp||PACKAGE_ppp-multilink) +linux-atm +kmod-pppoa
