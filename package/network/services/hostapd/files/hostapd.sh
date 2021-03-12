@@ -1,4 +1,5 @@
 . /lib/functions/network.sh
+. /lib/functions.sh
 
 wpa_supplicant_add_rate() {
 	local var="$1"
@@ -256,9 +257,9 @@ hostapd_common_add_bss_config() {
 	config_add_int mcast_rate
 	config_add_array basic_rate
 	config_add_array supported_rates
-	
+
 	config_add_boolean sae_require_mfp
-	
+
 	config_add_string 'owe_transition_bssid:macaddr' 'owe_transition_ssid:string'
 }
 
@@ -369,14 +370,15 @@ hostapd_set_bss_options() {
 		;;
 		psk|sae|psk-sae)
 			json_get_vars key wpa_psk_file
-			if [ ${#key} -lt 8 ]; then
+			if [ ${#key} -eq 64 ]; then
+				append bss_conf "wpa_psk=$key" "$N"
+			elif [ ${#key} -ge 8 ] && [ ${#key} -le 63 ]; then
+				append bss_conf "wpa_passphrase=$key" "$N"
+			elif [ -n "$key" ] || [ -z "$wpa_psk_file" ]; then
 				wireless_setup_vif_failed INVALID_WPA_PSK
 				return 1
-			elif [ ${#key} -eq 64 ]; then
-				append bss_conf "wpa_psk=$key" "$N"
-			else
-				append bss_conf "wpa_passphrase=$key" "$N"
 			fi
+			[ -z "$wpa_psk_file" ] && set_default wpa_psk_file /var/run/hostapd-$ifname.psk
 			[ -n "$wpa_psk_file" ] && {
 				[ -e "$wpa_psk_file" ] || touch "$wpa_psk_file"
 				append bss_conf "wpa_psk_file=$wpa_psk_file" "$N"
@@ -455,7 +457,7 @@ hostapd_set_bss_options() {
 		set_default wps_independent 1
 
 		wps_state=2
-		[ -n "$wps_configured" ] && wps_state=1
+		[ -n "$wps_not_configured" ] && wps_state=1
 
 		[ "$ext_registrar" -gt 0 -a -n "$network_bridge" ] && append bss_conf "upnp_iface=$network_bridge" "$N"
 
@@ -492,31 +494,33 @@ hostapd_set_bss_options() {
 		append bss_conf "iapp_interface=$ifname" "$N"
 	}
 
-	json_get_vars ieee80211v
+	json_get_vars ieee80211v time_advertisement time_zone wnm_sleep_mode bss_transition
 	set_default ieee80211v 0
 	if [ "$ieee80211v" -eq "1" ]; then
-		json_get_vars time_advertisement time_zone wnm_sleep_mode bss_transition
-
-		set_default time_advertisement 0
+		set_default bss_transition 1
 		set_default wnm_sleep_mode 0
+	else
 		set_default bss_transition 0
-
-		append bss_conf "time_advertisement=$time_advertisement" "$N"
-		[ -n "$time_zone" ] && append bss_conf "time_zone=$time_zone" "$N"
-		append bss_conf "wnm_sleep_mode=$wnm_sleep_mode" "$N"
-		append bss_conf "bss_transition=$bss_transition" "$N"
+		set_default wnm_sleep_mode 0
 	fi
 
-	json_get_vars ieee80211k
+	[ -n "$time_advertisement" ] && append bss_conf "time_advertisement=$time_advertisement" "$N"
+	[ -n "$time_zone" ] && append bss_conf "time_zone=$time_zone" "$N"
+	[ "$wnm_sleep_mode" -eq "1" ] && append bss_conf "wnm_sleep_mode=1" "$N"
+	[ "$bss_transition" -eq "1" ] && append bss_conf "bss_transition=1" "$N"
+
+	json_get_vars ieee80211k rrm_neighbor_report rrm_beacon_report
 	set_default ieee80211k 0
 	if [ "$ieee80211k" -eq "1" ]; then
-		json_get_vars rrm_neighbor_report rrm_beacon_report
-
 		set_default rrm_neighbor_report 1
 		set_default rrm_beacon_report 1
-		append bss_conf "rrm_neighbor_report=$rrm_neighbor_report" "$N"
-		append bss_conf "rrm_beacon_report=$rrm_beacon_report" "$N"
+	else
+		set_default rrm_neighbor_report 0
+		set_default rrm_beacon_report 0
 	fi
+
+	[ "$rrm_neighbor_report" -eq "1" ] && append bss_conf "rrm_neighbor_report=1" "$N"
+	[ "$rrm_beacon_report" -eq "1" ] && append bss_conf "rrm_beacon_report=1" "$N"
 
 	if [ "$wpa" -ge "1" ]; then
 		json_get_vars ieee80211r
@@ -524,7 +528,7 @@ hostapd_set_bss_options() {
 
 		if [ "$ieee80211r" -gt "0" ]; then
 			json_get_vars mobility_domain ft_psk_generate_local ft_over_ds reassociation_deadline
-			
+
 			set_default mobility_domain "$(echo "$ssid" | md5sum | head -c 4)"
 			set_default ft_over_ds 1
 			set_default reassociation_deadline 1000
@@ -1055,7 +1059,7 @@ wpa_supplicant_add_network() {
 		append network_data "mcast_rate=$mc_rate" "$N$T"
 	}
 
-	if [ "$key_mgnt" = "WPS" ]; then
+	if [ "$key_mgmt" = "WPS" ]; then
 		echo "wps_cred_processing=1" >> "$_config"
 	else
 		cat >> "$_config" <<EOF
@@ -1077,19 +1081,18 @@ wpa_supplicant_run() {
 	_wpa_supplicant_common "$ifname"
 
 	ubus wait_for wpa_supplicant
-	ubus call wpa_supplicant config_add "{ \
+	local supplicant_res="$(ubus call wpa_supplicant config_add "{ \
 		\"driver\": \"${_w_driver:-wext}\", \"ctrl\": \"$_rpath\", \
 		\"iface\": \"$ifname\", \"config\": \"$_config\" \
 		${network_bridge:+, \"bridge\": \"$network_bridge\"} \
 		${hostapd_ctrl:+, \"hostapd_ctrl\": \"$hostapd_ctrl\"} \
-		}"
+		}")"
 
 	ret="$?"
 
-	[ "$ret" != 0 ] && wireless_setup_vif_failed WPA_SUPPLICANT_FAILED
+	[ "$ret" != 0 -o -z "$supplicant_res" ] && wireless_setup_vif_failed WPA_SUPPLICANT_FAILED
 
-	local supplicant_pid=$(ubus call service list '{"name": "hostapd"}' | jsonfilter -l 1 -e "@['hostapd'].instances['supplicant'].pid")
-	wireless_add_process "$supplicant_pid" "/usr/sbin/wpa_supplicant" 1
+	wireless_add_process "$(jsonfilter -s "$supplicant_res" -l 1 -e @.pid)" "/usr/sbin/wpa_supplicant" 1 1
 
 	return $ret
 }
